@@ -1,0 +1,42 @@
+pipeline {
+    agent any
+    environment {
+        AWS_DEFAULT_REGION = 'ap-south1'
+       AWS_CREDENTIALS = ---
+            }
+    stages {
+        stage('Code') {
+            steps {
+                git credentialsId: 'git_id', url: 'https://github.com/Manojsiriparthi/End-to-End-Kubernetes-DevSecOps-Tetris-Project.git'
+            }
+        }
+         stage('Terraform Init') {
+            steps {
+                dir('Eks-Terraform') {
+                    script {
+                      sh 'terraform init'
+                    }
+                }
+            }
+        }
+        stage('Terraform Init') {
+            steps {
+                dir('Eks-Terraform') {
+                    script {
+                      sh 'terraform plan'
+                    }
+                }
+            }
+        }
+        stage('Terraform Init') {
+            steps {
+                dir('Eks-Terraform') {
+                    script {
+                      sh 'terraform ${action} --auto-approve'
+                    }
+                }
+            }
+        }
+    }
+}
+

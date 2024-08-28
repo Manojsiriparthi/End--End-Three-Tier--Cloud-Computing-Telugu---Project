@@ -1,0 +1,129 @@
+pipeline {
+    agent any 
+    tools {
+        jdk 'jdk'
+        nodejs 'nodejs'
+    }
+    environment  {
+        SCANNER_HOME = tool 'sonar-scanner'
+    }
+    stages {
+        stage('Cleaning Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+        stage('Checkout from Git') {
+            steps {
+                git branch: 'master', url: 'https://github.com/manojsiriparthi/your-repo.git'
+            }
+        }
+        stage('SonarQube Analysis') {
+            steps {
+                dir('Frontend') {
+                    withSonarQubeEnv('sonar-server') {
+                        sh '''
+                        $SCANNER_HOME/bin/sonar-scanner \
+                        -Dsonar.projectKey=Frontend \
+                        -Dsonar.projectName=Frontend \
+                        -Dsonar.sources=. \
+                        -Dsonar.host.url=$SONAR_HOST_URL \
+                        -Dsonar.login=$SONAR_AUTH_TOKEN
+                        '''
+                    }
+                }
+            }
+        }
+        stage('Quality Check') {
+            steps {
+                script {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+        stage('Installing Dependencies') {
+            steps {
+                dir('Frontend') {
+                    sh 'npm install'
+                }
+            }
+        }
+        stage('OWASP Dependency-Check Scan') {
+            steps {
+                dir('Frontend') {
+                    dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
+                    dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+                }
+            }
+        }
+        stage('Trivy File Scan') {
+            steps {
+                dir('Frontend') {
+                    sh 'trivy fs . > trivyfs.txt'
+                }
+            }
+        }
+        stage("Docker Image Build") {
+            steps {
+                script {
+                    dir('Frontend') {
+                        withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {   
+                            sh 'docker system prune -f'
+                            sh 'docker container prune -f'
+                            sh 'docker build -t frontend .'
+                        }
+                    }
+                }
+            }
+        }
+        stage("Docker Image Pushing") {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {   
+                        sh 'docker tag frontend manojsiriparthi/frontend:${BUILD_NUMBER}'
+                        sh 'docker push manojsiriparthi/frontend:${BUILD_NUMBER}'
+                    }
+                }
+            }
+        }
+        stage("TRIVY Image Scan") {
+            steps {
+                sh 'trivy image manojsiriparthi/frontend:${BUILD_NUMBER} > trivyimage.txt' 
+            }
+        }
+        stage('Update Deployment File in GitHub Repo') {
+            environment {
+                GIT_REPO_NAME = "End--End-Three-Tier-Project---Cloud-Computing-Telugu---Project"
+                GIT_USER_NAME = "manojsiriparthi"
+            }
+            steps {
+                dir('Kubernetes/frontend') {
+                    withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
+                        sh '''
+                            git config user.email "manojsiriparthi@gmail.com"
+                            git config user.name "manojsiriparthi"
+                            imageTag=$(grep -oP '(?<=frontend:)[^ ]+' deployment.yml)
+                            sed -i "s/frontend:${imageTag}/frontend:${BUILD_NUMBER}/" deployment.yml
+                            git add deployment.yml
+                            git commit -m "Update deployment Image to version ${BUILD_NUMBER}"
+                            git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git HEAD:master
+                        '''
+                    }
+                }
+            }
+        }
+    }
+    post {
+        success {
+            mail to: "manojs.devops1@gmail.com",
+                 subject: "Jenkins Pipeline Success: ${env.JOB_NAME}",
+                 body: "The pipeline ${env.JOB_NAME} with build number ${env.BUILD_NUMBER} completed successfully.\n\nBuild URL: ${env.BUILD_URL}"
+        }
+        failure {
+            mail to: "manojs.devops1@gmail.com",
+                 subject: "Jenkins Pipeline Failure: ${env.JOB_NAME}",
+                 body: "The pipeline ${env.JOB_NAME} with build number ${env.BUILD_NUMBER} failed.\n\nBuild URL: ${env.BUILD_URL}"
+        }
+    }
+}
+
